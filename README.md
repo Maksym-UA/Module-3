@@ -1,4 +1,4 @@
-ESP32 S3 Traffic lights mini project in Arduino framework.
+ESP32 S3 ADC data calibration
 
 
 SETUP
