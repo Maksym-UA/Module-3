@@ -1,4 +1,5 @@
-ESP32 S3 ADC data calibration
+ESP32 S3 ADC data calibration while reading input from a 10k poteniometer on GPIO4 wich is
+a ADC1_CH3 on ESP32 S3.
 
 
 SETUP
