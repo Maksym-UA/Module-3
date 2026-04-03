@@ -1,81 +1,89 @@
 #include <stdio.h>
-#include <atomic>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
-#include "esp_timer.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
+#include "esp_log.h"
 
-#define BUTTON_GPIO 16
-#define DEBOUNCE_DELAY_MS 50
+#define LED_GPIO (gpio_num_t)18
+#define THRESHOLD_LOW  1400  // Напруга для ввімкнення (Dark)
+#define THRESHOLD_HIGH 1800  // Напруга для вимкнення (Light)
+#define WINDOW_SIZE  10    // Розмір вікна фільтрації (чим більше, тим плавніша реакція)
 
-class Button {
-public:
-  Button(int gpio_num, uint32_t debounce_ms = DEBOUNCE_DELAY_MS)
-    : gpio_num_(gpio_num), debounce_ms_(debounce_ms), press_count_(0), event_flag_(false) {
-    // Configure button GPIO
-    gpio_config_t io_conf = {
-      .pin_bit_mask = (1ULL << gpio_num_),
-      .mode = GPIO_MODE_INPUT,
-      .pull_up_en = GPIO_PULLUP_ENABLE,
-      .pull_down_en = GPIO_PULLDOWN_DISABLE,
-      .intr_type = GPIO_INTR_NEGEDGE
-    };
-    gpio_config(&io_conf);
+// Функція Simple Moving Average
+int get_sma_voltage(int new_sample) {
+    static int samples[WINDOW_SIZE] = {0};
+    static int index = 0;
+    static long sum = 0;
+    static bool filled = false;
 
-    // Create debounce timer
-    esp_timer_create_args_t debounce_timer_args = {};
-    debounce_timer_args.callback = &Button::debounce_timer_callback_static;
-    debounce_timer_args.arg = this;
-    debounce_timer_args.dispatch_method = ESP_TIMER_TASK;
-    debounce_timer_args.name = "debounce_timer";
-    debounce_timer_args.skip_unhandled_events = false;
-    esp_timer_create(&debounce_timer_args, &debounce_timer_);
+    // Віднімаємо найстаріше значення, додаємо нове
+    sum -= samples[index];
+    samples[index] = new_sample;
+    sum += samples[index];
 
-    // Install GPIO ISR service and add handler (only once globally)
-    static bool isr_service_installed = false;
-    if (!isr_service_installed) {
-      gpio_install_isr_service(0);
-      isr_service_installed = true;
-    }
-    gpio_isr_handler_add((gpio_num_t)gpio_num_, Button::gpio_isr_handler_static, this);
-  }
+    index = (index + 1) % WINDOW_SIZE;
+    if (index == 0) filled = true;
 
-  uint32_t get_press_count() const { return press_count_; }
-  bool get_and_clear_event() {
-    bool was_set = event_flag_;
-    event_flag_ = false;
-    return was_set;
-  }
+    return (int)(sum / (filled ? WINDOW_SIZE : (index == 0 ? 1 : index)));
+}
 
-private:
-  int gpio_num_;
-  uint32_t debounce_ms_;
-  esp_timer_handle_t debounce_timer_;
-  std::atomic<uint32_t> press_count_;
-  std::atomic<bool> event_flag_;
+extern "C" void app_main(void) {
 
-  static void IRAM_ATTR gpio_isr_handler_static(void* arg) {
-    Button* self = static_cast<Button*>(arg);
-    esp_timer_stop(self->debounce_timer_);
-    esp_timer_start_once(self->debounce_timer_, self->debounce_ms_ * 1000);
-  }
+  // 1. Налаштування LED
+  gpio_reset_pin(LED_GPIO);
+  gpio_set_direction(LED_GPIO, GPIO_MODE_OUTPUT);
+  gpio_set_level(LED_GPIO, 0);
 
-  static void debounce_timer_callback_static(void* arg) {
-    Button* self = static_cast<Button*>(arg);
-    // Check if button is still pressed (active low)
-    if (gpio_get_level((gpio_num_t)self->gpio_num_) == 0) {
-      self->press_count_++;
-      self->event_flag_ = true;
-    }
-  }
-};
+  // 2. Конфігурація модуля (Unit)
+  adc_oneshot_unit_handle_t adc1_handle;
+  adc_oneshot_unit_init_cfg_t adc1_config = {};
+  adc1_config.unit_id = ADC_UNIT_1; // Використовуємо ADC1
+  adc1_config.ulp_mode = ADC_ULP_MODE_DISABLE; // Вимикаємо режим ультранизького енергоспоживання
 
-extern "C" void app_main() {
-  Button button(BUTTON_GPIO);
+  ESP_ERROR_CHECK(adc_oneshot_new_unit(&adc1_config, &adc1_handle));
+
+  // 3. Налаштування каналу (LDR на GPIO 4)
+  adc_oneshot_chan_cfg_t config = {
+    .atten = ADC_ATTEN_DB_12,        // До 3.3V для S3
+    .bitwidth = ADC_BITWIDTH_DEFAULT,
+  };
+  ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_3, &config));
+
+  // 4. Налаштування калібрування для отримання мВ
+  adc_cali_handle_t cali_handle = NULL;
+
+  adc_cali_curve_fitting_config_t cali_config = {
+    .unit_id = ADC_UNIT_1,
+    .chan = ADC_CHANNEL_3,
+    .atten = ADC_ATTEN_DB_12,
+    .bitwidth = ADC_BITWIDTH_DEFAULT,
+  };
+
+  // Створюємо схему калібрування за допомогою методу curve fitting
+  ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&cali_config, &cali_handle));
+
   while (1) {
-    if (button.get_and_clear_event()) {
-      printf("Button pressed! Total presses: %lu\n", button.get_press_count());
+        int raw_val, voltage_mv;
+
+        // 1. Зчитування
+        ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_3, &raw_val));
+        ESP_ERROR_CHECK(adc_cali_raw_to_voltage(cali_handle, raw_val, &voltage_mv));
+
+        // 2. Фільтрація (SMA)
+        int filtered_voltage = get_sma_voltage(voltage_mv);
+
+        // 3. Логіка з гістерезисом (опційно для стабільності)
+        if (filtered_voltage < THRESHOLD_LOW) {
+            gpio_set_level(LED_GPIO, 1);
+        } else if (filtered_voltage > THRESHOLD_HIGH) {
+            gpio_set_level(LED_GPIO, 0);
+        }
+
+        ESP_LOGI("ADC", "Voltage: %d mV | Filtered: %d mV", voltage_mv, filtered_voltage);
+
+        vTaskDelay(pdMS_TO_TICKS(100)); // Час вибірки 100мс
     }
-    vTaskDelay(pdMS_TO_TICKS(10));
-  }
 }
