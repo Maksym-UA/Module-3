@@ -1,29 +1,27 @@
-# ESP32-S3 Light-Control Project (ESP-IDF + PlatformIO)
+# ESP32-S3 LED PWM Fade Project (ESP-IDF + PlatformIO)
 
-This project reads an LDR sensor on ESP32-S3, filters the ADC signal with a
-Simple Moving Average (SMA), and controls an LED with hysteresis to avoid
-flicker.
+This project demonstrates PWM-based LED control using the LEDC peripheral.
+The LED fades smoothly in and out with configurable timing.
 
 ## What the project does
 
-- Reads light level from ADC (GPIO4 / ADC1 CH3)
-- Converts raw ADC value to millivolts using calibration (curve fitting)
-- Applies SMA filter with a 10-sample window
-- Turns LED ON in dark conditions and OFF in bright conditions
-- Logs raw and filtered voltage to serial output
+- Initializes LEDC (PWM) timer on ESP32-S3
+- Fades LED brightness from 0% to 100% (fade-in)
+- Holds at max brightness for 500 ms
+- Fades LED brightness from 100% to 0% (fade-out)
+- Waits 1 second, then repeats
 
-Current control values from `src/main.cpp`:
+Current PWM settings from `src/main.cpp`:
 
-- `LED_GPIO = 18`
-- `THRESHOLD_LOW = 1400 mV` (turn LED ON)
-- `THRESHOLD_HIGH = 1800 mV` (turn LED OFF)
-- Sampling interval: `100 ms`
+- `LED_GPIO = 18` (output pin)
+- `LEDC_FREQUENCY = 1000 Hz` (1 kHz)
+- `LEDC_RESOLUTION = 10-bit` (0–1023 duty cycle)
+- `STEP_DELAY = 20 ms` (smooth fade transitions)
 
 ## Hardware
 
 - Board: ESP32-S3-DevKitC-1
-- LDR voltage divider connected to GPIO4 (ADC input)
-- LED connected to GPIO18 (with resistor)
+- LED connected to GPIO18 with current-limiting resistor (220 Ω recommended)
 
 ## Software requirements
 
@@ -51,25 +49,15 @@ Open serial monitor (115200 baud):
 pio device monitor -b 115200
 ```
 
-Expected log format:
-
-```text
-I (....) ADC: Voltage: 1560 mV | Filtered: 1512 mV
-```
-
 ## Configuration notes
 
 - Framework: `espidf`
 - Monitor speed: `115200`
 - Flash mode/size configured for this project: `qio`, `16MB`
 
-Main configuration file:
-
-- `platformio.ini`
-
 ## Project structure
 
-- `src/main.cpp` - application logic (ADC read, filtering, LED control)
+- `src/main.cpp` - LED PWM fade logic using LEDC driver
 - `platformio.ini` - board and build settings
 - `sdkconfig.esp32-s3-devkitc-1` - ESP-IDF configuration
 
