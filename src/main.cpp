@@ -1,55 +1,91 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/ledc.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
+#include "esp_log.h"
 
-#define LED_GPIO (gpio_num_t)18
-#define LEDC_CHANNEL LEDC_CHANNEL_0
-#define LEDC_TIMER LEDC_TIMER_0
-#define LEDC_FREQUENCY 1000     // 1 kHz
-#define LEDC_RESOLUTION LEDC_TIMER_10_BIT      // 10-bit (0-1023)
+// LED (PWM)
+#define LED_GPIO        (gpio_num_t)18  // GPIO18 = ADC1_CH17 — used as PWM output
+#define LEDC_CHANNEL    LEDC_CHANNEL_0
+#define LEDC_TIMER      LEDC_TIMER_0
+#define LEDC_FREQUENCY  1000            // 1 kHz
+#define LEDC_RESOLUTION LEDC_TIMER_10_BIT  // 10-bit: duty 0–1023
 
+// Potentiometer (ADC)
+#define POT_ADC_UNIT    ADC_UNIT_1
+#define POT_ADC_CHANNEL ADC_CHANNEL_3   // GPIO4 = ADC1_CH3
 
+static const char *TAG = "POT";
 
 extern "C" void app_main(void) {
 
-  // Налаштування таймера
+    // PWM setup
     ledc_timer_config_t timer_config = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LEDC_RESOLUTION,
         .timer_num = LEDC_TIMER,
         .freq_hz = LEDC_FREQUENCY,
-        .clk_cfg = LEDC_AUTO_CLK
+        .clk_cfg = LEDC_AUTO_CLK,
+        .deconfigure = false,
     };
     ledc_timer_config(&timer_config);
 
-    // Налаштування каналу
     ledc_channel_config_t channel_config = {
         .gpio_num = LED_GPIO,
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .channel = LEDC_CHANNEL,
+        .intr_type = LEDC_INTR_DISABLE,
         .timer_sel = LEDC_TIMER,
         .duty = 0,
-        .hpoint = 0
+        .hpoint = 0,
+        .sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
+        .flags = {
+            .output_invert = 0,
+        },
     };
     ledc_channel_config(&channel_config);
 
+    // ADC setup (potentiometer on GPIO4 / ADC1_CH3)
+    adc_oneshot_unit_handle_t adc_handle;
+    adc_oneshot_unit_init_cfg_t adc_unit_cfg = {};
+    adc_unit_cfg.unit_id = POT_ADC_UNIT;
+    adc_unit_cfg.ulp_mode = ADC_ULP_MODE_DISABLE;
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&adc_unit_cfg, &adc_handle));
+
+    adc_oneshot_chan_cfg_t adc_chan_cfg = {
+        .atten    = ADC_ATTEN_DB_12,        // full 0–3.3 V range
+        .bitwidth = ADC_BITWIDTH_DEFAULT,   // 12-bit: 0–4095
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, POT_ADC_CHANNEL, &adc_chan_cfg));
+
+    // ADC calibration (curve fitting)
+    adc_cali_handle_t cali_handle = NULL;
+    adc_cali_curve_fitting_config_t cali_cfg = {
+        .unit_id  = POT_ADC_UNIT,
+        .chan     = POT_ADC_CHANNEL,
+        .atten    = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&cali_cfg, &cali_handle));
+
     while (1) {
-        // Fade-in: поступово збільшуємо яскравість з 0% до 100%
-        for (int brightness = 0; brightness <= 1023; brightness += 10) {
-            ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, brightness);
-            ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
-            vTaskDelay(pdMS_TO_TICKS(20));  // 20 мс затримка між кроками
-        }
+        // Read potentiometer
+        int raw = 0;
+        ESP_ERROR_CHECK(adc_oneshot_read(adc_handle, POT_ADC_CHANNEL, &raw));
 
-        vTaskDelay(pdMS_TO_TICKS(500));  // 500 мс пауза при максимальній яскравості
+        int voltage_mv = 0;
+        ESP_ERROR_CHECK(adc_cali_raw_to_voltage(cali_handle, raw, &voltage_mv));
 
-        // Fade-out: поступово зменшуємо яскравість з 100% до 0%
-        for (int brightness = 1023; brightness >= 0; brightness -= 10) {
-            ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, brightness);
-            ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
-            vTaskDelay(pdMS_TO_TICKS(20));
-        }
+        // Map 12-bit ADC (0–4095) → 10-bit PWM duty (0–1023)
+        int duty = raw >> 2;
 
-        vTaskDelay(pdMS_TO_TICKS(1000));  // 1 секунда пауза перед повтором
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, duty);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
+
+        ESP_LOGI(TAG, "Raw: %4d | Voltage: %4d mV | Duty: %4d", raw, voltage_mv, duty);
+
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
