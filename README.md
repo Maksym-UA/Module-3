@@ -1,29 +1,72 @@
-ESP32 S3 ADC data calibration while reading input from a 10k poteniometer on GPIO4 wich is
-a ADC1_CH3 on ESP32 S3.
+# ESP32-S3: Potentiometer-Controlled PWM Motor Speed
 
+This project reads a 10k potentiometer on ESP32-S3 ADC input and uses it to control motor speed with LEDC PWM.
 
-SETUP
-=====
+## What it does
 
- 1. Install PlatformIO.
+- Reads analog value from `GPIO4` (`ADC1_CH3`)
+- Maps ADC range (`0..4095`) to PWM duty (`0..1023`, 10-bit)
+- Outputs PWM on `GPIO5` at `20 kHz`
+- Prints debug info to Serial at `115200` baud:
+	- raw potentiometer value
+	- speed in percent
+	- applied PWM duty
 
- 2. Open the project in VS Code
+## Hardware pins
 
- 3. To build the project, execute the command in the VS terminal
- ```
- $ pio run
- ```
- 4. To upload the project to the ESP32 run this command
- ```
- $ pio run -t upload
- ```
- 5. Monitor serial output at 115200 baud
- ```
- $ pio device monitor -b 115200
- ```
+- Potentiometer signal -> `GPIO4`
+- Motor PWM output -> `GPIO5`
+- Common GND between ESP32-S3 and driver/power stage
 
-CONTACT
-=======
+## Wiring diagram (ASCII)
 
-Please send you feedback to
- max.savin3@gmail.com
+```text
+Potentiometer (10k)                ESP32-S3 DevKitC-1
+-------------------               --------------------
+VCC  --------------------------->  3V3
+GND  --------------------------->  GND
+SIG (wiper) -------------------->  GPIO4 (ADC1_CH3)
+
+ESP32-S3 DevKitC-1                Motor driver / transistor stage
+--------------------             -------------------------------
+GPIO5 (PWM / LEDC) ------------->  PWM / IN control pin
+GND ---------------------------->  GND
+```
+
+## Safety note
+
+- Do **not** connect a motor directly to an ESP32 GPIO pin.
+- Use a proper motor driver or transistor/MOSFET stage.
+- For brushed DC motors, add a flyback diode across the motor terminals.
+- Ensure the motor power supply and ESP32 share a common GND.
+
+## Build and upload (PlatformIO)
+
+1. Install PlatformIO (VS Code extension).
+2. Open this project folder in VS Code.
+3. Build:
+
+```bash
+platformio run
+```
+
+4. Upload:
+
+```bash
+platformio run --target upload
+```
+
+5. Open serial monitor:
+
+```bash
+platformio device monitor -b 115200
+```
+
+## Environment
+
+- Board: `esp32-s3-devkitc-1`
+- Framework: `arduino`
+
+## Contact
+
+Feedback: `max.savin3@gmail.com`

@@ -1,51 +1,56 @@
 #include <Arduino.h>
-#include "esp_adc_cal.h" // Include the ESP32 ADC calibration library
+#include "driver/ledc.h"
 
-// Configure parameters
-struct Config {
-  static constexpr uint8_t ADC_PIN = 4; //ADC1_CH3
-  static constexpr uint32_t BAUDRATE = 115200;
-  static constexpr float VCC = 3.3; //volts
-  static constexpr int ADC_RES = 4095; // 12-bit resolution (0-4095)
-  static esp_adc_cal_characteristics_t adc_chars;
-};
-
-esp_adc_cal_characteristics_t Config::adc_chars;
+#define MOTOR_PWM_PIN 5
+#define POT_PIN 4
+#define LEDC_CHANNEL LEDC_CHANNEL_0
+#define LEDC_TIMER 0
+#define LEDC_FREQUENCY 20000    // 20 kHz для мотора
+#define LEDC_RESOLUTION 10      // 10-bit
 
 void setup() {
+    Serial.begin(115200);
 
-  Serial.begin(Config::BAUDRATE);
-  analogReadResolution(12); // Set ADC resolution to 12 bits
-  analogSetAttenuation(ADC_11db);// Set attenuation to 11dB for a wider voltage range (up to ~3.6V)
+    // Налаштування таймера для мотора
+    ledc_timer_config_t timer_config = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = (ledc_timer_bit_t)LEDC_RESOLUTION,
+        .timer_num = (ledc_timer_t)LEDC_TIMER,
+        .freq_hz = LEDC_FREQUENCY,      // 20 kHz для мотора
+        .clk_cfg = LEDC_AUTO_CLK
+    };
+    ledc_timer_config(&timer_config);
 
-  // Characterize ADC
-  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, Config::VCC, &Config::adc_chars);
+    // Налаштування каналу для мотора
+    ledc_channel_config_t channel_config = {
+        .gpio_num = MOTOR_PWM_PIN,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = LEDC_CHANNEL,
+        .timer_sel = (ledc_timer_t)LEDC_TIMER,
+        .duty = 0,
+        .hpoint = 0
+    };
+    ledc_channel_config(&channel_config);
+
+    pinMode(POT_PIN, INPUT);
 }
 
 void loop() {
-  // RAW value from ADC
-  int rawValue = analogRead(Config::ADC_PIN);
+    // Читаємо потенціометр
+    int potValue = analogRead(POT_PIN);  // 0-4095
 
-  // Convert to mV using the formula: (raw / max_raw) * VCC * 1000
-  float voltageCalc = (rawValue / (float)Config::ADC_RES) * Config::VCC * 1000.0; // Convert to mV
+    // Маштабуємо до duty cycle (0-1023)
+    int dutyCycle = map(potValue, 0, 4095, 0, 1023);
 
-  // Get calibrated voltage in mV using the ESP32 ADC calibration function
-  uint32_t voltageCalib = esp_adc_cal_raw_to_voltage(rawValue, &Config::adc_chars);
+    // Встановлюємо швидкість мотора
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)LEDC_CHANNEL, dutyCycle);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)LEDC_CHANNEL);
 
-  float errorPercent = 0;
-  if (voltageCalib > 0) {
-    errorPercent = (abs(voltageCalc - (float)voltageCalib) / (float)voltageCalib) * 100.0;
-  }
+    // Виводимо значення
+    Serial.printf("Pot: %4d → Speed: %3d%% → Duty: %4d\n",
+                  potValue,
+                  (dutyCycle * 100) / 1023,
+                  dutyCycle);
 
-  Serial.print(rawValue);
-  Serial.print("\t ");
-  Serial.print(voltageCalc, 1);
-  Serial.print("\t\t ");
-  Serial.print(voltageCalib);
-  Serial.print("\t\t ");
-  Serial.print(errorPercent, 2);
-  Serial.println("%");
-
-  // Update every 100 ms
-  delay(100);
+    delay(100);
 }
