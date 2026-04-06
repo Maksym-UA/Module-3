@@ -1,9 +1,0 @@
-Command: cmake -G Ninja -B /home/maksym/Documents/PlatformIO/Projects/Module-2.6-ESP-IDF/build -DPYTHON_DEPS_CHECKED=1 -DPYTHON=/home/maksym/.espressif/tools/python/v6.0/venv/bin/python3 -DESP_PLATFORM=1 -DIDF_TARGET=esp32s3 -DCCACHE_ENABLE=False /home/maksym/Documents/PlatformIO/Projects/Module-2.6-ESP-IDF
-Configuration Report               
- ───────────────────────────────── 
-   Parser Version: 1               
-   Verbosity: default              
-   Defaults policy: sdkconfig      
-   Status: Finished successfully   
-                                   
- ───────────────────────────────── 

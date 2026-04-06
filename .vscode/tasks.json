@@ -1,0 +1,40 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "PlatformIO: Build (Module_3)",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run"],
+      "options": {
+        "cwd": "/home/maksym/Desktop/Beetroot/Module_3"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PlatformIO: Upload (Module_3)",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["run", "--target", "upload"],
+      "options": {
+        "cwd": "/home/maksym/Desktop/Beetroot/Module_3"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PlatformIO: Monitor (Module_3)",
+      "type": "shell",
+      "command": "platformio",
+      "args": ["device", "monitor", "-b", "115200"],
+      "options": {
+        "cwd": "/home/maksym/Desktop/Beetroot/Module_3"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}
