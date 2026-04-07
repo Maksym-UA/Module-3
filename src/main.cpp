@@ -7,26 +7,36 @@
 #include "esp_log.h"
 
 // LED (PWM)
-#define LED_GPIO        (gpio_num_t)18  // GPIO18 = ADC1_CH17 — used as PWM output
-#define LEDC_CHANNEL    LEDC_CHANNEL_0
-#define LEDC_TIMER      LEDC_TIMER_0
-#define LEDC_FREQUENCY  1000            // 1 kHz
-#define LEDC_RESOLUTION LEDC_TIMER_10_BIT  // 10-bit: duty 0–1023
+#define LED_GPIO              (gpio_num_t)18  // GPIO18 = ADC1_CH17 — used as PWM output
+#define LED_LEDC_CHANNEL      LEDC_CHANNEL_0
+#define LED_LEDC_TIMER        LEDC_TIMER_0
+#define LED_LEDC_FREQUENCY    1000            // 1 kHz
+#define LED_LEDC_RESOLUTION   LEDC_TIMER_10_BIT  // 10-bit: duty 0–1023
 
 // Potentiometer (ADC)
-#define POT_ADC_UNIT    ADC_UNIT_1
-#define POT_ADC_CHANNEL ADC_CHANNEL_3   // GPIO4 = ADC1_CH3
+#define POT_GPIO              (gpio_num_t)4
+#define POT_ADC_UNIT          ADC_UNIT_1
+#define POT_ADC_CHANNEL       ADC_CHANNEL_3   // GPIO4 = ADC1_CH3
 
-static const char *TAG = "POT";
+// DC motor (PWM)
+#define MOTOR_GPIO            (gpio_num_t)5   // GPIO5 = ADC1_CH5 — used as PWM output
+#define MOTOR_LEDC_CHANNEL    LEDC_CHANNEL_1
+#define MOTOR_LEDC_TIMER      LEDC_TIMER_1
+#define MOTOR_LEDC_FREQUENCY  20000    // 20 kHz для мотора
+#define MOTOR_LEDC_RESOLUTION LEDC_TIMER_10_BIT  // 10-bit: duty 0–1023
+
+
+
+static const char *TAG = "MAIN";
 
 extern "C" void app_main(void) {
 
-    // PWM setup
+    // PWM setup for LED
     ledc_timer_config_t timer_config = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
-        .duty_resolution = LEDC_RESOLUTION,
-        .timer_num = LEDC_TIMER,
-        .freq_hz = LEDC_FREQUENCY,
+        .duty_resolution = LED_LEDC_RESOLUTION,
+        .timer_num = LED_LEDC_TIMER,
+        .freq_hz = LED_LEDC_FREQUENCY,
         .clk_cfg = LEDC_AUTO_CLK,
         .deconfigure = false,
     };
@@ -35,9 +45,9 @@ extern "C" void app_main(void) {
     ledc_channel_config_t channel_config = {
         .gpio_num = LED_GPIO,
         .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = LEDC_CHANNEL,
+        .channel = LED_LEDC_CHANNEL,
         .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = LEDC_TIMER,
+        .timer_sel = LED_LEDC_TIMER,
         .duty = 0,
         .hpoint = 0,
         .sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
@@ -70,6 +80,32 @@ extern "C" void app_main(void) {
     };
     ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&cali_cfg, &cali_handle));
 
+    //DC motor PWM setup
+    ledc_timer_config_t timer_config_motor = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = MOTOR_LEDC_RESOLUTION,
+        .timer_num = MOTOR_LEDC_TIMER,
+        .freq_hz = MOTOR_LEDC_FREQUENCY,      // 20 kHz для мотора
+        .clk_cfg = LEDC_AUTO_CLK,
+        .deconfigure = false,
+    };
+    ledc_timer_config(&timer_config_motor);
+
+    ledc_channel_config_t motor_channel_config = {
+        .gpio_num = MOTOR_GPIO,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = MOTOR_LEDC_CHANNEL,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = MOTOR_LEDC_TIMER,
+        .duty = 0,
+        .hpoint = 0,
+        .sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
+        .flags = {
+            .output_invert = 0,
+        },
+    };
+    ledc_channel_config(&motor_channel_config);
+
     while (1) {
         // Read potentiometer
         int raw = 0;
@@ -81,8 +117,19 @@ extern "C" void app_main(void) {
         // Map 12-bit ADC (0–4095) → 10-bit PWM duty (0–1023)
         int duty = raw >> 2;
 
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, duty);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
+        // Control LED
+        if (duty < 10) { // Add this "if" statement to kill the flicker at the bottom
+            duty = 0;
+            ledc_set_duty(LEDC_LOW_SPEED_MODE, LED_LEDC_CHANNEL, duty);
+            ledc_update_duty(LEDC_LOW_SPEED_MODE, LED_LEDC_CHANNEL);
+        } else {
+            ledc_set_duty(LEDC_LOW_SPEED_MODE, LED_LEDC_CHANNEL, duty);
+            ledc_update_duty(LEDC_LOW_SPEED_MODE, LED_LEDC_CHANNEL);
+        }
+
+        // Control motor (same potentiometer, independent)
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, MOTOR_LEDC_CHANNEL, duty);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, MOTOR_LEDC_CHANNEL);
 
         ESP_LOGI(TAG, "Raw: %4d | Voltage: %4d mV | Duty: %4d", raw, voltage_mv, duty);
 
