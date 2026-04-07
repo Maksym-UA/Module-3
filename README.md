@@ -24,6 +24,8 @@ Current settings from `src/main.cpp`:
 - Potentiometer connected to GPIO4 (ADC input)
 - LED connected to GPIO18 with current-limiting resistor (220 Ω recommended)
 - DC motor driver input (PWM) connected to GPIO5
+- ST2N2222A NPN transitor
+- 1N4007 1 kΩ freewheeling diode
 
 Note: connect motor via a proper driver/transistor stage, not directly to ESP32 pin.
 
