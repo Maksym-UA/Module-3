@@ -1,138 +1,98 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/ledc.h"
-#include "esp_adc/adc_oneshot.h"
-#include "esp_adc/adc_cali.h"
-#include "esp_adc/adc_cali_scheme.h"
 #include "esp_log.h"
 
-// LED (PWM)
-#define LED_GPIO              (gpio_num_t)18  // GPIO18 = ADC1_CH17 — used as PWM output
-#define LED_LEDC_CHANNEL      LEDC_CHANNEL_0
-#define LED_LEDC_TIMER        LEDC_TIMER_0
-#define LED_LEDC_FREQUENCY    1000            // 1 kHz
-#define LED_LEDC_RESOLUTION   LEDC_TIMER_10_BIT  // 10-bit: duty 0–1023
+#define BUZZER_GPIO 4
+#define BUZZER_LEDC_MODE LEDC_LOW_SPEED_MODE
+#define BUZZER_LEDC_TIMER LEDC_TIMER_0
+#define BUZZER_LEDC_CHANNEL LEDC_CHANNEL_0
+#define BUZZER_DUTY_RES LEDC_TIMER_10_BIT
+#define BUZZER_DUTY_ON 512
 
-// Potentiometer (ADC)
-#define POT_GPIO              (gpio_num_t)4
-#define POT_ADC_UNIT          ADC_UNIT_1
-#define POT_ADC_CHANNEL       ADC_CHANNEL_3   // GPIO4 = ADC1_CH3
+static const char *TAG = "pwm_buzzer";
 
-// DC motor (PWM)
-#define MOTOR_GPIO            (gpio_num_t)5   // GPIO5 = ADC1_CH5 — used as PWM output
-#define MOTOR_LEDC_CHANNEL    LEDC_CHANNEL_1
-#define MOTOR_LEDC_TIMER      LEDC_TIMER_1
-#define MOTOR_LEDC_FREQUENCY  20000    // 20 kHz для мотора
-#define MOTOR_LEDC_RESOLUTION LEDC_TIMER_10_BIT  // 10-bit: duty 0–1023
+// Музичні ноти (частоти в Hz)
+#define NOTE_C4 262
+#define NOTE_D4 294
+#define NOTE_E4 330
+#define NOTE_F4 349
+#define NOTE_G4 392
+#define NOTE_A4 440
+#define NOTE_B4 494
+#define NOTE_C5 523
 
+static void playNote(int frequency, int durationMs)
+{
+    if (frequency <= 0) {
+        ledc_stop(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0);
+        vTaskDelay(pdMS_TO_TICKS(durationMs));
+        return;
+    }
 
+    uint32_t actual_freq = ledc_set_freq(BUZZER_LEDC_MODE, BUZZER_LEDC_TIMER, frequency);
+    if (actual_freq == 0) {
+        ESP_LOGW(TAG, "Failed to set frequency: %d Hz", frequency);
+        ledc_stop(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0);
+        vTaskDelay(pdMS_TO_TICKS(durationMs));
+        return;
+    }
 
-static const char *TAG = "MAIN";
+    ESP_ERROR_CHECK(ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, BUZZER_DUTY_ON));
+    ESP_ERROR_CHECK(ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL));
 
-extern "C" void app_main(void) {
+    vTaskDelay(pdMS_TO_TICKS(durationMs));
 
-    // PWM setup for LED
-    ledc_timer_config_t timer_config = {
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .duty_resolution = LED_LEDC_RESOLUTION,
-        .timer_num = LED_LEDC_TIMER,
-        .freq_hz = LED_LEDC_FREQUENCY,
-        .clk_cfg = LEDC_AUTO_CLK,
-        .deconfigure = false,
-    };
-    ledc_timer_config(&timer_config);
+    ESP_ERROR_CHECK(ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0));
+    ESP_ERROR_CHECK(ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL));
+    vTaskDelay(pdMS_TO_TICKS(50));
+}
 
-    ledc_channel_config_t channel_config = {
-        .gpio_num = LED_GPIO,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = LED_LEDC_CHANNEL,
-        .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = LED_LEDC_TIMER,
-        .duty = 0,
-        .hpoint = 0,
-        .sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
-        .flags = {
-            .output_invert = 0,
-        },
-    };
-    ledc_channel_config(&channel_config);
+extern "C" void app_main(void)
+{
+    ESP_LOGI(TAG, "Initializing PWM buzzer...");
 
-    // ADC setup (potentiometer on GPIO4 / ADC1_CH3)
-    adc_oneshot_unit_handle_t adc_handle;
-    adc_oneshot_unit_init_cfg_t adc_unit_cfg = {};
-    adc_unit_cfg.unit_id = POT_ADC_UNIT;
-    adc_unit_cfg.ulp_mode = ADC_ULP_MODE_DISABLE;
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&adc_unit_cfg, &adc_handle));
+    ledc_timer_config_t ledc_timer = {};
+    ledc_timer.speed_mode = BUZZER_LEDC_MODE;
+    ledc_timer.timer_num = BUZZER_LEDC_TIMER;
+    ledc_timer.duty_resolution = BUZZER_DUTY_RES;
+    ledc_timer.freq_hz = 1000;
+    ledc_timer.clk_cfg = LEDC_AUTO_CLK;
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
-    adc_oneshot_chan_cfg_t adc_chan_cfg = {
-        .atten    = ADC_ATTEN_DB_12,        // full 0–3.3 V range
-        .bitwidth = ADC_BITWIDTH_DEFAULT,   // 12-bit: 0–4095
-    };
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, POT_ADC_CHANNEL, &adc_chan_cfg));
+    ledc_channel_config_t ledc_channel = {};
+    ledc_channel.gpio_num = BUZZER_GPIO;
+    ledc_channel.speed_mode = BUZZER_LEDC_MODE;
+    ledc_channel.channel = BUZZER_LEDC_CHANNEL;
+    ledc_channel.intr_type = LEDC_INTR_DISABLE;
+    ledc_channel.timer_sel = BUZZER_LEDC_TIMER;
+    ledc_channel.duty = 0;
+    ledc_channel.hpoint = 0;
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
 
-    // ADC calibration (curve fitting)
-    adc_cali_handle_t cali_handle = NULL;
-    adc_cali_curve_fitting_config_t cali_cfg = {
-        .unit_id  = POT_ADC_UNIT,
-        .chan     = POT_ADC_CHANNEL,
-        .atten    = ADC_ATTEN_DB_12,
-        .bitwidth = ADC_BITWIDTH_DEFAULT,
-    };
-    ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&cali_cfg, &cali_handle));
-
-    //DC motor PWM setup
-    ledc_timer_config_t timer_config_motor = {
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .duty_resolution = MOTOR_LEDC_RESOLUTION,
-        .timer_num = MOTOR_LEDC_TIMER,
-        .freq_hz = MOTOR_LEDC_FREQUENCY,      // 20 kHz для мотора
-        .clk_cfg = LEDC_AUTO_CLK,
-        .deconfigure = false,
-    };
-    ledc_timer_config(&timer_config_motor);
-
-    ledc_channel_config_t motor_channel_config = {
-        .gpio_num = MOTOR_GPIO,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = MOTOR_LEDC_CHANNEL,
-        .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = MOTOR_LEDC_TIMER,
-        .duty = 0,
-        .hpoint = 0,
-        .sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
-        .flags = {
-            .output_invert = 0,
-        },
-    };
-    ledc_channel_config(&motor_channel_config);
+    ESP_LOGI(TAG, "PWM buzzer ready on GPIO%d", BUZZER_GPIO);
 
     while (1) {
-        // Read potentiometer
-        int raw = 0;
-        ESP_ERROR_CHECK(adc_oneshot_read(adc_handle, POT_ADC_CHANNEL, &raw));
+        // Мелодія "Twinkle, Twinkle, Little Star"
+        // Do Do Sol Sol La La Sol
+        playNote(NOTE_C4, 400);
+        playNote(NOTE_C4, 400);
+        playNote(NOTE_G4, 400);
+        playNote(NOTE_G4, 400);
+        playNote(NOTE_A4, 400);
+        playNote(NOTE_A4, 400);
+        playNote(NOTE_G4, 800);
 
-        int voltage_mv = 0;
-        ESP_ERROR_CHECK(adc_cali_raw_to_voltage(cali_handle, raw, &voltage_mv));
+        // Fa Fa Mi Mi Re Re Do
+        playNote(NOTE_F4, 400);
+        playNote(NOTE_F4, 400);
+        playNote(NOTE_E4, 400);
+        playNote(NOTE_E4, 400);
+        playNote(NOTE_D4, 400);
+        playNote(NOTE_D4, 400);
+        playNote(NOTE_C4, 800);
 
-        // Map 12-bit ADC (0–4095) → 10-bit PWM duty (0–1023)
-        int duty = raw >> 2;
-
-        // Control LED
-        if (duty < 10) { // Add this "if" statement to kill the flicker at the bottom
-            duty = 0;
-            ledc_set_duty(LEDC_LOW_SPEED_MODE, LED_LEDC_CHANNEL, duty);
-            ledc_update_duty(LEDC_LOW_SPEED_MODE, LED_LEDC_CHANNEL);
-        } else {
-            ledc_set_duty(LEDC_LOW_SPEED_MODE, LED_LEDC_CHANNEL, duty);
-            ledc_update_duty(LEDC_LOW_SPEED_MODE, LED_LEDC_CHANNEL);
-        }
-
-        // Control motor (same potentiometer, independent)
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, MOTOR_LEDC_CHANNEL, duty);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, MOTOR_LEDC_CHANNEL);
-
-        ESP_LOGI(TAG, "Raw: %4d | Voltage: %4d mV | Duty: %4d", raw, voltage_mv, duty);
-
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }
+
