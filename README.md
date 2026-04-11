@@ -1,15 +1,12 @@
-# ESP32-S3 Generate melody with DAC (ESP-IDF + PlatformIO)
+# ESP32-S3 Jingle Bells with PWM (LEDC) (ESP-IDF + PlatformIO)
 
-This project plays "Twinkle, Twinkle, Little Star" melody via DAC on ESP32-S3.
-
-
-
+This project plays the "Jingle Bells" melody on a buzzer using the ESP32-S3 LEDC PWM peripheral.
+It runs in `app_main()` and uses `usleep()` for timing (no explicit FreeRTOS task or `vTaskDelay()`).
 
 ## Hardware
 
 - Board: ESP32-S3-DevKitC-1
-- Buzzer
-
+- Buzzer on GPIO4
 
 ## Software requirements
 
@@ -42,12 +39,12 @@ pio device monitor -b 115200
 - Framework: `espidf`
 - Monitor speed: `115200`
 - Flash mode/size configured for this project: `qio`, `16MB`
-- The fundamental issue is that ledc_set_freq() can't dynamically change the frequency on an already-configured LEDC timer with the current settings. The 100 Hz base frequency doesn't provide enough clock divider resolution to reach these specific audio frequencies.
-- Changed the approach: instead of trying to dynamically change the frequency with ledc_set_freq(), the code now reconfigures the entire timer for each note. This allows the LEDC hardware to automatically calculate the proper clock dividers for each specific frequency. Build and test—this should make all the notes play.
+- The fundamental issue is that `ledc_set_freq()` can fail to retune frequency on an already-configured timer for these note values.
+- Current approach: reconfigure the LEDC timer (`ledc_timer_config`) per note, then set duty/update duty to produce sound.
 
 ## Project structure
 
-- `src/main.cpp` - ADC reading + PWM control for LED and motor
+- `src/main.cpp` - LEDC PWM buzzer initialization and Jingle Bells melody playback
 - `platformio.ini` - board and build settings
 - `sdkconfig.esp32-s3-devkitc-1` - ESP-IDF configuration
 

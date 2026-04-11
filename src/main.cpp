@@ -1,5 +1,4 @@
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <unistd.h>
 #include "driver/ledc.h"
 #include "esp_log.h"
 
@@ -18,15 +17,13 @@ static const char *TAG = "pwm_buzzer";
 #define NOTE_E4 330
 #define NOTE_F4 349
 #define NOTE_G4 392
-#define NOTE_A4 440
-#define NOTE_B4 494
 #define NOTE_C5 523
 
 static void playNote(int frequency, int durationMs)
 {
     if (frequency <= 0) {
         ledc_stop(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0);
-        vTaskDelay(pdMS_TO_TICKS(durationMs));
+        usleep(durationMs * 1000);
         return;
     }
     // The fundamental issue is that ledc_set_freq() can't dynamically change the frequency
@@ -47,11 +44,11 @@ static void playNote(int frequency, int durationMs)
     ESP_ERROR_CHECK(ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, BUZZER_DUTY_ON));
     ESP_ERROR_CHECK(ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL));
 
-    vTaskDelay(pdMS_TO_TICKS(durationMs));
+    usleep(durationMs * 1000);
 
     ESP_ERROR_CHECK(ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0));
     ESP_ERROR_CHECK(ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL));
-    vTaskDelay(pdMS_TO_TICKS(50));
+    usleep(50 * 1000);
 }
 
 extern "C" void app_main(void)
@@ -79,26 +76,41 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "PWM buzzer ready on GPIO%d", BUZZER_GPIO);
 
     while (1) {
-        // Мелодія "Twinkle, Twinkle, Little Star"
-        // Do Do Sol Sol La La Sol
-        playNote(NOTE_C4, 400);
-        playNote(NOTE_C4, 400);
-        playNote(NOTE_G4, 400);
-        playNote(NOTE_G4, 400);
-        playNote(NOTE_A4, 400);
-        playNote(NOTE_A4, 400);
-        playNote(NOTE_G4, 800);
+        // Мелодія "Jingle Bells" ( ближчий до оригіналу)
+        // Jingle bells, jingle bells, jingle all the way
+        // E E E | E E E | E G C D E
+        playNote(NOTE_E4, 250);
+        playNote(NOTE_E4, 250);
+        playNote(NOTE_E4, 500);
 
-        // Fa Fa Mi Mi Re Re Do
-        playNote(NOTE_F4, 400);
-        playNote(NOTE_F4, 400);
-        playNote(NOTE_E4, 400);
-        playNote(NOTE_E4, 400);
-        playNote(NOTE_D4, 400);
-        playNote(NOTE_D4, 400);
-        playNote(NOTE_C4, 800);
+        playNote(NOTE_E4, 250);
+        playNote(NOTE_E4, 250);
+        playNote(NOTE_E4, 500);
 
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        playNote(NOTE_E4, 250);
+        playNote(NOTE_G4, 250);
+        playNote(NOTE_C4, 250);
+        playNote(NOTE_D4, 250);
+        playNote(NOTE_E4, 750);
+
+        // Oh what fun it is to ride in a one-horse open sleigh
+        // F F F F F E E | E G G F D C
+        playNote(NOTE_F4, 250);
+        playNote(NOTE_F4, 250);
+        playNote(NOTE_F4, 250);
+        playNote(NOTE_F4, 250);
+        playNote(NOTE_F4, 250);
+        playNote(NOTE_E4, 250);
+        playNote(NOTE_E4, 250);
+
+        playNote(NOTE_E4, 250);
+        playNote(NOTE_G4, 250);
+        playNote(NOTE_G4, 250);
+        playNote(NOTE_F4, 250);
+        playNote(NOTE_D4, 250);
+        playNote(NOTE_C4, 1000);
+
+        usleep(2000 * 1000);
     }
 }
 
