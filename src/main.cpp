@@ -17,7 +17,6 @@ static const char *TAG = "pwm_buzzer";
 #define NOTE_E4 330
 #define NOTE_F4 349
 #define NOTE_G4 392
-#define NOTE_C5 523
 
 static void playNote(int frequency, int durationMs)
 {
