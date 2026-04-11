@@ -7,8 +7,8 @@
 #define BUZZER_LEDC_MODE LEDC_LOW_SPEED_MODE
 #define BUZZER_LEDC_TIMER LEDC_TIMER_0
 #define BUZZER_LEDC_CHANNEL LEDC_CHANNEL_0
-#define BUZZER_DUTY_RES LEDC_TIMER_10_BIT
-#define BUZZER_DUTY_ON 512
+#define BUZZER_DUTY_RES LEDC_TIMER_8_BIT
+#define BUZZER_DUTY_ON 128
 
 static const char *TAG = "pwm_buzzer";
 
@@ -29,14 +29,20 @@ static void playNote(int frequency, int durationMs)
         vTaskDelay(pdMS_TO_TICKS(durationMs));
         return;
     }
+    // The fundamental issue is that ledc_set_freq() can't dynamically change the frequency
+    // on an already-configured LEDC timer with the current settings. The 100 Hz base frequency
+    // doesn't provide enough clock divider resolution to reach these specific audio frequencies.
 
-    uint32_t actual_freq = ledc_set_freq(BUZZER_LEDC_MODE, BUZZER_LEDC_TIMER, frequency);
-    if (actual_freq == 0) {
-        ESP_LOGW(TAG, "Failed to set frequency: %d Hz", frequency);
-        ledc_stop(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0);
-        vTaskDelay(pdMS_TO_TICKS(durationMs));
-        return;
-    }
+    // Reconfigure timer with the desired frequency
+    ledc_timer_config_t ledc_timer = {};
+    ledc_timer.speed_mode = BUZZER_LEDC_MODE;
+    ledc_timer.timer_num = BUZZER_LEDC_TIMER;
+    ledc_timer.duty_resolution = BUZZER_DUTY_RES;
+    ledc_timer.freq_hz = frequency;
+    ledc_timer.clk_cfg = LEDC_AUTO_CLK;
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    ESP_LOGI(TAG, "Playing frequency: %d Hz", frequency);
 
     ESP_ERROR_CHECK(ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, BUZZER_DUTY_ON));
     ESP_ERROR_CHECK(ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL));
@@ -56,7 +62,7 @@ extern "C" void app_main(void)
     ledc_timer.speed_mode = BUZZER_LEDC_MODE;
     ledc_timer.timer_num = BUZZER_LEDC_TIMER;
     ledc_timer.duty_resolution = BUZZER_DUTY_RES;
-    ledc_timer.freq_hz = 1000;
+    ledc_timer.freq_hz = 100;  // Low base frequency for better divider resolution
     ledc_timer.clk_cfg = LEDC_AUTO_CLK;
     ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
