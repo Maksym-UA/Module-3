@@ -3,7 +3,6 @@
 #include <freertos/task.h>
 #include <esp_log.h>
 
-
 #define SERVO_PIN 18
 #define SERVO_CHANNEL LEDC_CHANNEL_0
 #define SERVO_TIMER LEDC_TIMER_0
@@ -93,3 +92,4 @@ extern "C" void app_main(void)
 
     }
 }
+
