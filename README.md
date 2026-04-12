@@ -1,12 +1,12 @@
-# ESP32-S3 Jingle Bells with PWM (LEDC) (ESP-IDF + PlatformIO)
+# ESP32-S3 Servo Control with LEDC PWM (ESP-IDF + PlatformIO)
 
-This project plays the "Jingle Bells" melody on a buzzer using the ESP32-S3 LEDC PWM peripheral.
-It runs in `app_main()` and uses `usleep()` for timing (no explicit FreeRTOS task or `vTaskDelay()`).
+This project controls a servo motor on ESP32-S3 using the LEDC PWM peripheral.
+The firmware initializes a 50 Hz PWM signal and continuously sweeps the servo angle from 0° to 180° and back.
 
 ## Hardware
 
 - Board: ESP32-S3-DevKitC-1
-- Buzzer on GPIO4
+- Servo motor (signal on GPIO18)
 
 ## Software requirements
 
@@ -39,12 +39,14 @@ pio device monitor -b 115200
 - Framework: `espidf`
 - Monitor speed: `115200`
 - Flash mode/size configured for this project: `qio`, `16MB`
-- The fundamental issue is that `ledc_set_freq()` can fail to retune frequency on an already-configured timer for these note values.
-- Current approach: reconfigure the LEDC timer (`ledc_timer_config`) per note, then set duty/update duty to produce sound.
+- PWM frequency: `50 Hz` (servo standard)
+- LEDC resolution: `13-bit` (`8192` duty steps)
+- Pulse mapping: `1000 us` (0°) to `2000 us` (180°), period `20000 us`
+- Sweep step: `10°` every `200 ms`
 
 ## Project structure
 
-- `src/main.cpp` - LEDC PWM buzzer initialization and Jingle Bells melody playback
+- `src/main.cpp` - LEDC timer/channel setup and servo angle sweep logic
 - `platformio.ini` - board and build settings
 - `sdkconfig.esp32-s3-devkitc-1` - ESP-IDF configuration
 
