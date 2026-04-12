@@ -26,20 +26,33 @@
 #define PERIOD_US 20000     // 50 Гц = 20 мс період
 
 static const char *TAG = "servo_ledc";
-
-static float clamp_angle(float angle)
-{
-    if (angle < 0.0f) {
-        return 0.0f;
-    }
-    if (angle > 180.0f) {
-        return 180.0f;
-    }
-    return angle;
-}
-
 static adc_oneshot_unit_handle_t adc_handle;
 static adc_cali_handle_t cali_handle;
+static int adc_min_value = 0;      // Мінімум потенціометра
+static int adc_max_value = 4095;   // Максимум потенціометра
+
+/**
+ * РЕЖИМ КАЛІБРУВАННЯ: щоб знайти реальний діапазон потенціометра
+ * 1. Поверніть потенціометр до лівого крайнього положення, запишіть значення з логу
+ * 2. Поверніть потенціометр до правого крайнього положення, запишіть значення з логу
+ * 3. Замініть adc_min_value та adc_max_value на ці значення
+ * 4. Перезавантажте прошивку
+ * Приклад: якщо ліво=520, право=3580, то:
+ *   static int adc_min_value = 520;
+ *   static int adc_max_value = 3580;
+ */
+
+static float clamp_angle(float angle)
+    {
+        if (angle < 0.0f) {
+            return 0.0f;
+        }
+        if (angle > 180.0f) {
+            return 180.0f;
+        }
+        return angle;
+    }
+
 
 void setup_potentiometer_ledc() {
     // Конфігурація ADC для потенціометра
@@ -89,6 +102,7 @@ void setup_servo_ledc() {
     ESP_ERROR_CHECK(ledc_channel_config(&channel_conf));
 }
 
+
 void set_servo_angle_ledc(float angle) {
     // Обмежити кут від 0 до 180
     angle = clamp_angle(angle);
@@ -108,7 +122,6 @@ void set_servo_angle_ledc(float angle) {
 }
 
 
-
 extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "Starting servo LEDC control");
@@ -119,16 +132,30 @@ extern "C" void app_main(void)
 
 
     while (1) {
-        // Прочитати значення потенціометра (0-4095 для 12-бітного АЦП)
+        // Прочитати значення потенціометра (raw ADC)
         int potValue = 0;
         ESP_ERROR_CHECK(adc_oneshot_read(adc_handle, POT_ADC_CHANNEL, &potValue));
-        // Конвертувати значення потенціометра в кут (0-180 градусів)
-        float angle = (potValue / 4095.0) * 180.0  ;
+
+        // Калібрування: конвертувати raw ADC в напругу (mV)
+        int voltage_mv = 0;
+        if (cali_handle != NULL) {
+            ESP_ERROR_CHECK(adc_cali_raw_to_voltage(cali_handle, potValue, &voltage_mv));
+        }
+
+        // Обмежити до реального діапазону потенціометра
+        if (potValue < adc_min_value) potValue = adc_min_value;
+        if (potValue > adc_max_value) potValue = adc_max_value;
+
+        // Конвертувати значення потенціометра в кут (0-180 градусів) з використанням реального діапазону
+        float angle = ((float)(potValue - adc_min_value) / (adc_max_value - adc_min_value)) * 180.0;
+
         // Встановити кут сервомотора
         set_servo_angle_ledc(angle);
 
-        vTaskDelay(pdMS_TO_TICKS(100));  // Затримка для стабільності
+        // Логування для налагодження
+        //ESP_LOGI(TAG, "Pot: raw=%d, voltage=%d mV, angle=%.1f° | (min=%d, max=%d)",
+                // potValue, voltage_mv, angle, adc_min_value, adc_max_value);
 
-
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
