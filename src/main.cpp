@@ -20,8 +20,8 @@
 #define POT_ADC_CHANNEL       ADC_CHANNEL_3   // GPIO4 = ADC1_CH3
 
 // Константи для конвертації кута в мікросекунди
-#define MIN_PULSE_US 1000   // 0 градусів
-#define MAX_PULSE_US 2000   // 180 градусів
+#define MIN_PULSE_US 500   // 0 градусів
+#define MAX_PULSE_US 2500   // 180 градусів
 #define PERIOD_US 20000     // 50 Гц = 20 мс період
 
 static const char *TAG = "servo_ledc";
