@@ -5,10 +5,10 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 
-// Configuration Defines
-#define ENCODER_A_INPUT         16
-#define ENCODER_B_INPUT         17
-#define ENCODER_BUTTON_INPUT    15
+// Verified Safe Pins for S3 N16R8
+#define ENCODER_A_INPUT         5   // CLK
+#define ENCODER_B_INPUT         4   // DT
+#define ENCODER_BUTTON_INPUT    6   // SW
 #define ENCODER_DEBOUNCE_NS     1000
 #define ENCODER_MAX_COUNT       32767
 #define ENCODER_MIN_COUNT       -32768
@@ -22,7 +22,6 @@ private:
 
 public:
     QuadratureEncoder() {
-        // 1. Initialize Pulse Counter Unit
         pcnt_unit_config_t unit_config = {
             .low_limit = ENCODER_MIN_COUNT,
             .high_limit = ENCODER_MAX_COUNT,
@@ -31,24 +30,11 @@ public:
         };
         ESP_ERROR_CHECK(pcnt_new_unit(&unit_config, &unit));
 
-        // 2. Configure Glitch Filter with specified debounce time
-        pcnt_glitch_filter_config_t filter_config = {
-            .max_glitch_ns = ENCODER_DEBOUNCE_NS
-        };
+        pcnt_glitch_filter_config_t filter_config = { .max_glitch_ns = ENCODER_DEBOUNCE_NS };
         ESP_ERROR_CHECK(pcnt_unit_set_glitch_filter(unit, &filter_config));
 
-        // 3. Setup Channels for X4 decoding
-        pcnt_chan_config_t config_a = {
-            .edge_gpio_num = ENCODER_A_INPUT,
-            .level_gpio_num = ENCODER_B_INPUT,
-            .flags = {}
-        };
-        pcnt_chan_config_t config_b = {
-            .edge_gpio_num = ENCODER_B_INPUT,
-            .level_gpio_num = ENCODER_A_INPUT,
-            .flags = {}
-        };
-
+        pcnt_chan_config_t config_a = { .edge_gpio_num = ENCODER_A_INPUT, .level_gpio_num = ENCODER_B_INPUT, .flags = {} };
+        pcnt_chan_config_t config_b = { .edge_gpio_num = ENCODER_B_INPUT, .level_gpio_num = ENCODER_A_INPUT, .flags = {} };
         ESP_ERROR_CHECK(pcnt_new_channel(unit, &config_a, &chan_a));
         ESP_ERROR_CHECK(pcnt_new_channel(unit, &config_b, &chan_b));
 
@@ -59,7 +45,7 @@ public:
         ESP_ERROR_CHECK(pcnt_channel_set_edge_action(chan_b, PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
         ESP_ERROR_CHECK(pcnt_channel_set_level_action(chan_b, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
 
-        // 4. Initialize Button GPIO
+        // Button Setup
         gpio_config_t btn_conf = {
             .pin_bit_mask = (1ULL << ENCODER_BUTTON_INPUT),
             .mode = GPIO_MODE_INPUT,
@@ -69,21 +55,9 @@ public:
         };
         ESP_ERROR_CHECK(gpio_config(&btn_conf));
 
-        // 5. Start Unit
         ESP_ERROR_CHECK(pcnt_unit_enable(unit));
         ESP_ERROR_CHECK(pcnt_unit_clear_count(unit));
         ESP_ERROR_CHECK(pcnt_unit_start(unit));
-
-        ESP_LOGI(TAG, "Encoder (Pins %d,%d) and Button (%d) Ready",
-                 ENCODER_A_INPUT, ENCODER_B_INPUT, ENCODER_BUTTON_INPUT);
-    }
-
-    ~QuadratureEncoder() {
-        if (unit) {
-            pcnt_unit_stop(unit);
-            pcnt_unit_disable(unit);
-            pcnt_del_unit(unit);
-        }
     }
 
     int get_count() const {
@@ -103,23 +77,22 @@ public:
 
 extern "C" void app_main() {
     QuadratureEncoder encoder;
-    bool last_button_state = false;
+    bool last_btn = false;
 
     while (true) {
-        bool current_button_pressed = encoder.is_button_pressed();
-        int pos = encoder.get_count();
+        bool current_btn = encoder.is_button_pressed();
 
-        // Reset logic: Triggered when button transitions from NOT pressed to pressed
-        if (current_button_pressed && !last_button_state) {
+        // Reset on Falling Edge (Button Push)
+        if (current_btn && !last_btn) {
             encoder.reset();
-            ESP_LOGI("ENCODER", "Button Pressed: Counter Reset to 0");
+            ESP_LOGI("SYSTEM", "Counter Reset to 0");
         }
+        last_btn = current_btn;
 
-        // Update state for next iteration
-        last_button_state = current_button_pressed;
-
-        // Print current status
-        printf("Pos: %d | Button: %s\n", pos, current_button_pressed ? "DOWN" : "UP");
+        printf("Steps: %d | Raw: %d | Button: %s\n",
+               encoder.get_count() / 4,
+               encoder.get_count(),
+               current_btn ? "DOWN" : "UP");
 
         vTaskDelay(pdMS_TO_TICKS(50));
     }
