@@ -40,6 +40,17 @@ private:
     unsigned long last_direction_time = 0;
     unsigned long last_rpm_time = 0;
 
+    static bool on_full_rotation(pcnt_unit_handle_t unit,
+                                 const pcnt_watch_event_data_t *edata,
+                                 void *user_ctx) {
+        if (edata->watch_point_value == ENCODER_PPR) {
+            ESP_LOGI("ENCODER", "Full Rotation CW!");
+        } else if (edata->watch_point_value == -ENCODER_PPR) {
+            ESP_LOGI("ENCODER", "Full Rotation CCW!");
+        }
+        return false;
+    }
+
 public:
     QuadratureEncoder() {
         pcnt_unit_config_t unit_config = {
@@ -72,6 +83,15 @@ public:
             chan_b, PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
         ESP_ERROR_CHECK(pcnt_channel_set_level_action(
             chan_b, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
+
+        // Watch points: report full-rotation events in both directions
+        ESP_ERROR_CHECK(pcnt_unit_add_watch_point(unit, ENCODER_PPR));
+        ESP_ERROR_CHECK(pcnt_unit_add_watch_point(unit, -ENCODER_PPR));
+
+        pcnt_event_callbacks_t callbacks = {
+            .on_reach = on_full_rotation,
+        };
+        ESP_ERROR_CHECK(pcnt_unit_register_event_callbacks(unit, &callbacks, this));
 
         // Button Setup
         gpio_config_t btn_conf = {
