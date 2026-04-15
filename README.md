@@ -1,4 +1,4 @@
-# ESP32-S3 Quadrature point with rotary Encoder (ESP-IDF + PlatformIO)
+# ESP32-S3 Prpject to operate servo with the help of rotary encodedr (ESP-IDF + PlatformIO)
 
 
 
@@ -6,6 +6,7 @@
 
 - Board: ESP32-S3-DevKitC-1
 - Rotary encoder
+- Servo
 
 ## Wiring
 

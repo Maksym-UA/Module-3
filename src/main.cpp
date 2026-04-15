@@ -1,14 +1,27 @@
 #include <cstdio>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "driver/pulse_cnt.h"
-#include "driver/gpio.h"
-#include "esp_log.h"
-#include "esp_timer.h" 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <driver/pulse_cnt.h>
+#include <driver/gpio.h>
+#include <driver/ledc.h>
+#include <esp_log.h>
+#include <esp_timer.h>
+
+// Servo configuration
+#define SERVO_PIN 18
+#define SERVO_CHANNEL LEDC_CHANNEL_0
+#define SERVO_TIMER LEDC_TIMER_0
+#define SERVO_FREQ 50  // 50 Гц для сервомотора
+#define SERVO_RESOLUTION LEDC_TIMER_13_BIT  // 13 біт = 8192 рівня
+
+// Константи для конвертації кута в мікросекунди
+#define MIN_PULSE_US 500   // 0 градусів
+#define MAX_PULSE_US 2500   // 180 градусів
+#define PERIOD_US 20000     // 50 Гц = 20 мс період
 
 // Verified Safe Pins for S3 N16R8
-//Channel A and Channel B appeared to be swaped on the pinout of the encoder,
-//so I swapped them in the code to match the expected behavior: increment when CW, decrement when CCW.
+// Channel A and Channel B appeared to be swaped on the pinout of the encoder,
+// so I swapped them in the code to match the expected behavior: increment when CW, decrement when CCW.
 #define ENCODER_A_INPUT         5   // CLK
 #define ENCODER_B_INPUT         4   // DT
 #define ENCODER_BUTTON_INPUT    6   // SW
@@ -19,10 +32,90 @@
 
 const int ENCODER_PPR = 1024;
 const int SAMPLE_INTERVAL_MS = 100;
+const float SERVO_MIN_ANGLE = 0.0f;
+const float SERVO_MAX_ANGLE = 180.0f;
+const float SERVO_CENTER_ANGLE = 90.0f;
+const float SERVO_COUNTS_PER_DEGREE = 2.0f;
+
+static const char *TAG = "servo_ledc";
+
 
 // Function helper to get milliseconds in ESP-IDF
 unsigned long get_millis() {
     return (unsigned long)(esp_timer_get_time() / 1000);
+}
+
+static float clamp_angle(float angle)
+    {
+        if (angle < SERVO_MIN_ANGLE) {
+            return SERVO_MIN_ANGLE;
+        }
+        if (angle > SERVO_MAX_ANGLE) {
+            return SERVO_MAX_ANGLE;
+        }
+        return angle;
+    }
+
+static uint32_t angle_to_duty(float angle) {
+    angle = clamp_angle(angle);
+    float pulse_us = MIN_PULSE_US + (angle / SERVO_MAX_ANGLE) * (MAX_PULSE_US - MIN_PULSE_US);
+    uint32_t max_duty = (1U << SERVO_RESOLUTION) - 1U;
+    return (uint32_t)((pulse_us / PERIOD_US) * (float)max_duty);
+}
+
+void setup_servo_ledc() {
+    ESP_ERROR_CHECK(gpio_reset_pin((gpio_num_t)SERVO_PIN));
+
+    // Конфігурація таймера LEDC
+    ledc_timer_config_t timer_conf = {};
+    timer_conf.speed_mode = LEDC_LOW_SPEED_MODE;
+    timer_conf.duty_resolution = SERVO_RESOLUTION;  // 13 біт
+    timer_conf.timer_num = SERVO_TIMER;
+    timer_conf.freq_hz = SERVO_FREQ;                // 50 Гц
+    timer_conf.clk_cfg = LEDC_AUTO_CLK;
+    ESP_ERROR_CHECK(ledc_timer_config(&timer_conf));
+
+    // Конфігурація каналу LEDC
+    ledc_channel_config_t channel_conf = {};
+    channel_conf.gpio_num = SERVO_PIN;
+    channel_conf.speed_mode = LEDC_LOW_SPEED_MODE;
+    channel_conf.channel = SERVO_CHANNEL;
+    channel_conf.intr_type = LEDC_INTR_DISABLE;
+    channel_conf.timer_sel = SERVO_TIMER;
+    channel_conf.duty = angle_to_duty(90.0f);  // Початкова позиція (90°)
+    channel_conf.hpoint = 0;
+    channel_conf.flags.output_invert = 0;
+
+    esp_err_t channel_err = ledc_channel_config(&channel_conf);
+    if (channel_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to bind LEDC to GPIO%d (err=0x%x). Pin may already be used.", SERVO_PIN, (unsigned int)channel_err);
+        ESP_ERROR_CHECK(channel_err);
+    }
+}
+
+void set_servo_angle_ledc(float angle) {
+    // Обмежити кут від 0 до 180
+    angle = clamp_angle(angle);
+    float pulse_us = MIN_PULSE_US + (angle / SERVO_MAX_ANGLE) * (MAX_PULSE_US - MIN_PULSE_US);
+    uint32_t duty = angle_to_duty(angle);
+
+    // Записати в регістр LEDC
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, SERVO_CHANNEL, duty));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, SERVO_CHANNEL));
+
+    ESP_LOGI(TAG, "Angle: %.1f -> Pulse: %.1f us -> Duty: %lu", angle, pulse_us, (unsigned long)duty);
+}
+
+void servo_startup_test() {
+    ESP_LOGI(TAG, "Servo startup sweep: 90 -> 30 -> 150 -> 90");
+    set_servo_angle_ledc(90.0f);
+    vTaskDelay(pdMS_TO_TICKS(700));
+    set_servo_angle_ledc(30.0f);
+    vTaskDelay(pdMS_TO_TICKS(700));
+    set_servo_angle_ledc(150.0f);
+    vTaskDelay(pdMS_TO_TICKS(700));
+    set_servo_angle_ledc(90.0f);
+    vTaskDelay(pdMS_TO_TICKS(500));
 }
 
 
@@ -173,10 +266,19 @@ public:
     void reset() {
         pcnt_unit_clear_count(unit);
     }
+
+    
 };
 
 extern "C" void app_main() {
     QuadratureEncoder encoder;
+    setup_servo_ledc();
+    servo_startup_test();
+
+    float current_servo_angle = SERVO_CENTER_ANGLE;
+    set_servo_angle_ledc(current_servo_angle);
+    int last_servo_count = encoder.get_count();
+
     bool last_btn = false;
 
 
@@ -185,9 +287,22 @@ extern "C" void app_main() {
         encoder.calculate_rpm();
         encoder.detect_direction();
 
+        int current_count = encoder.get_count();
+        int delta_count = current_count - last_servo_count;
+        if (delta_count != 0) {
+            float target_servo_angle = current_servo_angle + ((float)delta_count / SERVO_COUNTS_PER_DEGREE);
+            target_servo_angle = clamp_angle(target_servo_angle);
+            set_servo_angle_ledc(target_servo_angle);
+            current_servo_angle = target_servo_angle;
+            last_servo_count = current_count;
+        }
+
         bool current_btn = encoder.is_button_pressed();
         if (current_btn && !last_btn) {
             encoder.reset();
+            current_servo_angle = SERVO_CENTER_ANGLE;
+            set_servo_angle_ledc(current_servo_angle);
+            last_servo_count = 0;
             ESP_LOGI("SYSTEM", "Counter Reset");
         }
         last_btn = current_btn;
