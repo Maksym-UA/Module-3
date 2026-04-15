@@ -14,6 +14,12 @@
 #define SERVO_FREQ 50  // 50 Гц для сервомотора
 #define SERVO_RESOLUTION LEDC_TIMER_13_BIT  // 13 біт = 8192 рівня
 
+#define BUZZER_PIN 17
+#define BUZZER_CHANNEL LEDC_CHANNEL_1
+#define BUZZER_TIMER LEDC_TIMER_1
+#define BUZZER_FREQ 2000
+#define BUZZER_RESOLUTION LEDC_TIMER_10_BIT
+
 // Константи для конвертації кута в мікросекунди
 #define MIN_PULSE_US 500   // 0 градусів
 #define MAX_PULSE_US 2500   // 180 градусів
@@ -38,6 +44,8 @@ const float SERVO_CENTER_ANGLE = 90.0f;
 const float SERVO_COUNTS_PER_DEGREE = 2.0f;
 const float SERVO_DIRECTION = -1.0f; // set to 1.0f for normal, -1.0f to flip
 const unsigned long BUTTON_LONG_PRESS_MS = 1000;
+const unsigned long LIMIT_BEEP_MS = 60;
+const unsigned long LIMIT_BEEP_COOLDOWN_MS = 120;
 
 static const char *TAG = "servo_ledc";
 
@@ -106,6 +114,38 @@ void set_servo_angle_ledc(float angle) {
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, SERVO_CHANNEL));
 
     ESP_LOGI(TAG, "Angle: %.1f -> Pulse: %.1f us -> Duty: %lu", angle, pulse_us, (unsigned long)duty);
+}
+
+void setup_buzzer() {
+    ESP_ERROR_CHECK(gpio_reset_pin((gpio_num_t)BUZZER_PIN));
+
+    ledc_timer_config_t timer_conf = {};
+    timer_conf.speed_mode = LEDC_LOW_SPEED_MODE;
+    timer_conf.duty_resolution = BUZZER_RESOLUTION;
+    timer_conf.timer_num = BUZZER_TIMER;
+    timer_conf.freq_hz = BUZZER_FREQ;
+    timer_conf.clk_cfg = LEDC_AUTO_CLK;
+    ESP_ERROR_CHECK(ledc_timer_config(&timer_conf));
+
+    ledc_channel_config_t channel_conf = {};
+    channel_conf.gpio_num = BUZZER_PIN;
+    channel_conf.speed_mode = LEDC_LOW_SPEED_MODE;
+    channel_conf.channel = BUZZER_CHANNEL;
+    channel_conf.intr_type = LEDC_INTR_DISABLE;
+    channel_conf.timer_sel = BUZZER_TIMER;
+    channel_conf.duty = 0;
+    channel_conf.hpoint = 0;
+    channel_conf.flags.output_invert = 0;
+    ESP_ERROR_CHECK(ledc_channel_config(&channel_conf));
+}
+
+void play_limit_beep() {
+    uint32_t duty = ((1U << BUZZER_RESOLUTION) - 1U) / 2U;
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, BUZZER_CHANNEL, duty));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, BUZZER_CHANNEL));
+    vTaskDelay(pdMS_TO_TICKS(LIMIT_BEEP_MS));
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, BUZZER_CHANNEL, 0));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, BUZZER_CHANNEL));
 }
 
 
@@ -261,6 +301,7 @@ public:
 extern "C" void app_main() {
     QuadratureEncoder encoder;
     setup_servo_ledc();
+    setup_buzzer();
 
     float current_servo_angle = SERVO_CENTER_ANGLE;
     float servo_step_scale = 1.0f;
@@ -270,6 +311,7 @@ extern "C" void app_main() {
     bool last_btn = false;
     bool long_press_handled = false;
     unsigned long button_press_start = 0;
+    unsigned long last_limit_beep_time = 0;
 
 
     while (true) {
@@ -280,10 +322,21 @@ extern "C" void app_main() {
         int current_count = encoder.get_count();
         int delta_count = current_count - last_servo_count;
         if (delta_count != 0) {
-            float target_servo_angle = current_servo_angle + (SERVO_DIRECTION * (((float)delta_count / SERVO_COUNTS_PER_DEGREE) * servo_step_scale));
-            target_servo_angle = clamp_angle(target_servo_angle);
-            set_servo_angle_ledc(target_servo_angle);
-            current_servo_angle = target_servo_angle;
+            float requested_servo_angle = current_servo_angle + (SERVO_DIRECTION * (((float)delta_count / SERVO_COUNTS_PER_DEGREE) * servo_step_scale));
+            float target_servo_angle = clamp_angle(requested_servo_angle);
+
+            if (target_servo_angle != requested_servo_angle) {
+                unsigned long now = get_millis();
+                if ((now - last_limit_beep_time) >= LIMIT_BEEP_COOLDOWN_MS) {
+                    play_limit_beep();
+                    last_limit_beep_time = get_millis();
+                }
+            }
+
+            if (target_servo_angle != current_servo_angle) {
+                set_servo_angle_ledc(target_servo_angle);
+                current_servo_angle = target_servo_angle;
+            }
             last_servo_count = current_count;
         }
 
