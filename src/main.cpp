@@ -36,6 +36,8 @@ const float SERVO_MIN_ANGLE = 0.0f;
 const float SERVO_MAX_ANGLE = 180.0f;
 const float SERVO_CENTER_ANGLE = 90.0f;
 const float SERVO_COUNTS_PER_DEGREE = 2.0f;
+const float SERVO_DIRECTION = -1.0f; // set to 1.0f for normal, -1.0f to flip
+const unsigned long BUTTON_LONG_PRESS_MS = 1000;
 
 static const char *TAG = "servo_ledc";
 
@@ -105,19 +107,6 @@ void set_servo_angle_ledc(float angle) {
 
     ESP_LOGI(TAG, "Angle: %.1f -> Pulse: %.1f us -> Duty: %lu", angle, pulse_us, (unsigned long)duty);
 }
-
-void servo_startup_test() {
-    ESP_LOGI(TAG, "Servo startup sweep: 90 -> 30 -> 150 -> 90");
-    set_servo_angle_ledc(90.0f);
-    vTaskDelay(pdMS_TO_TICKS(700));
-    set_servo_angle_ledc(30.0f);
-    vTaskDelay(pdMS_TO_TICKS(700));
-    set_servo_angle_ledc(150.0f);
-    vTaskDelay(pdMS_TO_TICKS(700));
-    set_servo_angle_ledc(90.0f);
-    vTaskDelay(pdMS_TO_TICKS(500));
-}
-
 
 
 class QuadratureEncoder {
@@ -266,20 +255,21 @@ public:
     void reset() {
         pcnt_unit_clear_count(unit);
     }
-
-    
 };
+
 
 extern "C" void app_main() {
     QuadratureEncoder encoder;
     setup_servo_ledc();
-    servo_startup_test();
 
     float current_servo_angle = SERVO_CENTER_ANGLE;
+    float servo_step_scale = 1.0f;
     set_servo_angle_ledc(current_servo_angle);
     int last_servo_count = encoder.get_count();
 
     bool last_btn = false;
+    bool long_press_handled = false;
+    unsigned long button_press_start = 0;
 
 
     while (true) {
@@ -290,7 +280,7 @@ extern "C" void app_main() {
         int current_count = encoder.get_count();
         int delta_count = current_count - last_servo_count;
         if (delta_count != 0) {
-            float target_servo_angle = current_servo_angle + ((float)delta_count / SERVO_COUNTS_PER_DEGREE);
+            float target_servo_angle = current_servo_angle + (SERVO_DIRECTION * (((float)delta_count / SERVO_COUNTS_PER_DEGREE) * servo_step_scale));
             target_servo_angle = clamp_angle(target_servo_angle);
             set_servo_angle_ledc(target_servo_angle);
             current_servo_angle = target_servo_angle;
@@ -299,11 +289,28 @@ extern "C" void app_main() {
 
         bool current_btn = encoder.is_button_pressed();
         if (current_btn && !last_btn) {
-            encoder.reset();
-            current_servo_angle = SERVO_CENTER_ANGLE;
-            set_servo_angle_ledc(current_servo_angle);
-            last_servo_count = 0;
-            ESP_LOGI("SYSTEM", "Counter Reset");
+            button_press_start = get_millis();
+            long_press_handled = false;
+        }
+
+        if (current_btn && !long_press_handled) {
+            unsigned long press_time = get_millis() - button_press_start;
+            if (press_time >= BUTTON_LONG_PRESS_MS) {
+                servo_step_scale = 1.0f;
+                encoder.reset();
+                current_servo_angle = SERVO_CENTER_ANGLE;
+                set_servo_angle_ledc(current_servo_angle);
+                last_servo_count = 0;
+                long_press_handled = true;
+                ESP_LOGI("SYSTEM", "Long press: step scale reset to %.2f and servo centered", servo_step_scale);
+            }
+        }
+
+        if (!current_btn && last_btn) {
+            if (!long_press_handled) {
+                servo_step_scale *= 0.5f;
+                ESP_LOGI("SYSTEM", "Short press: servo angle per tick halved. New scale: %.5f", servo_step_scale);
+            }
         }
         last_btn = current_btn;
 
