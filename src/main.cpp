@@ -6,12 +6,40 @@
 #include "esp_log.h"
 
 // Verified Safe Pins for S3 N16R8
+//Channel A and Channel B appeared to be swaped on the pinout of the encoder,
+//so I swapped them in the code to match the expected behavior: increment when CW, decrement when CCW.
 #define ENCODER_A_INPUT         5   // CLK
 #define ENCODER_B_INPUT         4   // DT
 #define ENCODER_BUTTON_INPUT    6   // SW
 #define ENCODER_DEBOUNCE_NS     1000
 #define ENCODER_MAX_COUNT       32767
 #define ENCODER_MIN_COUNT       -32768
+
+const int ENCODER_PPR = 1024;
+const int SAMPLE_INTERVAL_MS = 100;
+
+int last_count = 0;
+unsigned long last_time = 0;
+
+void calculate_rpm() {
+    int current_count;
+    unsigned long current_time = millis();
+
+    ESP_ERROR_CHECK(pcnt_unit_get_count(pcnt_unit, &current_count));
+
+    unsigned long time_delta = current_time - last_time;
+    if (time_delta >= SAMPLE_INTERVAL_MS) {
+        int count_delta = current_count - last_count;
+
+        float rpm = (float)count_delta / ENCODER_PPR * (60000.0 / time_delta);
+
+        ESP_LOGI("ENCODER", "RPM: %.2f", rpm);
+
+        last_count = current_count;
+        last_time = current_time;
+    }
+}
+
 
 class QuadratureEncoder {
 private:
