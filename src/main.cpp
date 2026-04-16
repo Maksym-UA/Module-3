@@ -1,88 +1,170 @@
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <esp_timer.h>
+// #include <esp_err.h>
+#include <driver/ledc.h>
+#include <esp_adc/adc_oneshot.h>
+#include <esp_adc/adc_cali.h>
+#include <esp_adc/adc_cali_scheme.h>
+#include <esp_log.h>
 
-#include "buzzer.hpp"
-#include "encoder.hpp"
-#include "servo.hpp"
+#define ADC_CHANNEL     ADC_CHANNEL_8   // Pin 9
+#define ADC_UNIT        ADC_UNIT_1
+#define ADC_ATTEN       ADC_ATTEN_DB_12
+#define ADC_BITWIDTH    ADC_BITWIDTH_12
 
-const float SERVO_COUNTS_PER_DEGREE = 2.0f;
-const float SERVO_DIRECTION = -1.0f;
-const unsigned long BUTTON_LONG_PRESS_MS = 1000;
-const unsigned long LIMIT_BEEP_COOLDOWN_MS = 120;
+#define SERVO_PIN           14
+#define SERVO_FREQ          50
+#define SERVO_PERIOD_MS     1000/SERVO_FREQ
+#define SERVO_RESOLUTION    LEDC_TIMER_12_BIT
+#define SERVO_MAX_DUTY      ((1 << SERVO_RESOLUTION) - 1)
+#define SERVO_UNIT          LEDC_TIMER_0
+#define SERVO_CHANNEL       LEDC_CHANNEL_0
 
-unsigned long get_millis() {
-    return (unsigned long)(esp_timer_get_time() / 1000);
+#define SUPERLOOP_DELAY     100
+
+// Calibration variables
+static int SERVO_MIN_DEG = 10;
+static int SERVO_MAX_DEG = 170;
+
+static int SERVO_MIN_US = 500;
+static int SERVO_MAX_US = 2500;
+
+static int LIGHT_MIN_MV = 50;
+static int LIGHT_MAX_MV = 3000;
+
+adc_oneshot_unit_handle_t adc_handle;
+adc_cali_handle_t cali_handle;
+
+
+static const char *TAG = "Mini Project";
+
+
+static void ldr_init(void)
+{
+    adc_oneshot_unit_init_cfg_t unit_config = {
+        .unit_id = ADC_UNIT,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit_config, &adc_handle));
+
+    adc_oneshot_chan_cfg_t channel_config = {
+    .atten = ADC_ATTEN,
+    .bitwidth = ADC_BITWIDTH,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(
+        adc_handle,
+        ADC_CHANNEL,
+        &channel_config
+    ));
+
+
+    adc_cali_curve_fitting_config_t cfg = {
+        .unit_id = ADC_UNIT,
+        .chan = ADC_CHANNEL,
+        .atten = ADC_ATTEN,
+        .bitwidth = ADC_BITWIDTH,
+    };
+    ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&cfg, &cali_handle));
 }
 
-extern "C" void app_main() {
-    Servo servo;
-    Buzzer buzzer;
-    QuadratureEncoder encoder;
-    servo.setup();
-    buzzer.setup();
+static void servo_init(void)
+{
+    ledc_timer_config_t timer_config = {
+        .speed_mode       = LEDC_LOW_SPEED_MODE,
+        .timer_num        = SERVO_UNIT,
+        .duty_resolution  = SERVO_RESOLUTION,
+        .freq_hz          = SERVO_FREQ,
+        .clk_cfg          = LEDC_AUTO_CLK
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&timer_config));
 
-    float current_servo_angle = Servo::kCenterAngle;
-    float servo_step_scale = 1.0f;
-    servo.setAngle(current_servo_angle);
-    int last_servo_count = encoder.getCount();
+    ledc_channel_config_t channel_config = {
+        .speed_mode     = LEDC_LOW_SPEED_MODE,
+        .channel        = SERVO_CHANNEL,
+        .timer_sel      = SERVO_UNIT,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .gpio_num       = SERVO_PIN,
+        .duty           = 0
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&channel_config));
+}
 
-    bool last_btn = false;
-    bool long_press_handled = false;
-    unsigned long button_press_start = 0;
-    unsigned long last_limit_beep_time = 0;
+static int val_clamp(int value, int val_min, int val_max)
+{
+    if (value < val_min) return val_min;
+    if (value > val_max) return val_max;
+    return value;
+}
+
+static int mad_map(int value, int in_min, int in_max, int out_min, int out_max)
+{
+    if (in_min == in_max) return out_max;
+
+    value = val_clamp(value, in_min, in_max);
+
+    return out_min + (value - in_min)*(out_max - out_min) / (in_max - in_min);
+}
+
+static void set_angle(int mv)
+{
+    mv = val_clamp(mv, LIGHT_MIN_MV, LIGHT_MAX_MV);
+
+    int val_deg = mad_map(mv, LIGHT_MIN_MV, LIGHT_MAX_MV, SERVO_MIN_DEG, SERVO_MAX_DEG);
+    printf("val_deg = %d\n", val_deg);
+    int val_us = mad_map(val_deg, SERVO_MIN_DEG, SERVO_MAX_DEG, SERVO_MIN_US, SERVO_MAX_US);
+    printf("val_us = %d\n", val_us);
+    printf("SERVO_MAX_DUTY = %d\n", SERVO_MAX_DUTY);
+
+    // uint32_t duty = (uint32_t)(SERVO_MAX_DUTY / SERVO_PERIOD_MS) * val_us / 1000; // 205 * val_ms
+    uint32_t duty = (uint32_t)(4095 / 20) * val_us / 1000; // 205 * val_ms
+    printf("Duty = %ld\n", duty);
+
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, SERVO_CHANNEL, duty));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, SERVO_CHANNEL));
+}
 
 
-    while (true) {
-        encoder.calculateRpm();
-        encoder.detectDirection();
+void app_main(void)
+{
+    ldr_init();
+    servo_init();
 
-        int current_count = encoder.getCount();
-        int delta_count = current_count - last_servo_count;
-        if (delta_count != 0) {
-            float requested_servo_angle = current_servo_angle + (SERVO_DIRECTION * (((float)delta_count / SERVO_COUNTS_PER_DEGREE) * servo_step_scale));
-            float target_servo_angle = servo.clampAngle(requested_servo_angle);
+    int raw;
+    int mv;
 
-            if (target_servo_angle != requested_servo_angle) {
-                unsigned long now = get_millis();
-                if ((now - last_limit_beep_time) >= LIMIT_BEEP_COOLDOWN_MS) {
-                    buzzer.playLimitBeep();
-                    last_limit_beep_time = get_millis();
-                }
-            }
+    while(1)
+    {
+        // ADT Test
+        adc_oneshot_read(adc_handle, ADC_CHANNEL, &raw);
+        ESP_ERROR_CHECK(
+            adc_cali_raw_to_voltage(cali_handle, raw, &mv)
+        );
 
-            if (target_servo_angle != current_servo_angle) {
-                servo.setAngle(target_servo_angle);
-                current_servo_angle = target_servo_angle;
-            }
-            last_servo_count = current_count;
-        }
+        printf("Raw ADC Value: %d\tVoltage Value: %d mV\n", raw, mv);
 
-        bool current_btn = encoder.isButtonPressed();
-        if (current_btn && !last_btn) {
-            button_press_start = get_millis();
-            long_press_handled = false;
-        }
+        set_angle(mv);
+        // SERVO Test
+        // ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, SERVO_CHANNEL, (204)));
+        // ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, SERVO_CHANNEL));
+        // vTaskDelay(pdMS_TO_TICKS(SUPERLOOP_DELAY));
 
-        if (current_btn && !long_press_handled) {
-            unsigned long press_time = get_millis() - button_press_start;
-            if (press_time >= BUTTON_LONG_PRESS_MS) {
-                servo_step_scale = 1.0f;
-                encoder.reset();
-                current_servo_angle = Servo::kCenterAngle;
-                servo.setAngle(current_servo_angle);
-                last_servo_count = 0;
-                long_press_handled = true;
-            }
-        }
+        // ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, SERVO_CHANNEL, (408)));
+        // ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, SERVO_CHANNEL));
+        vTaskDelay(pdMS_TO_TICKS(SUPERLOOP_DELAY));
 
-        if (!current_btn && last_btn) {
-            if (!long_press_handled) {
-                servo_step_scale *= 0.5f;
-            }
-        }
-        last_btn = current_btn;
 
-        vTaskDelay(pdMS_TO_TICKS(10));
     }
+/*
+
+    XX. Additional functionality
+        - SMA
+        -
+
+    ##### SUPERLOOP #####
+        - Normalize the value from ADC to SERVO angle (map one range to another)
+        - SERVO angle transform to PWM Duty Cycle
+        - WRITE log
+    */
 }
