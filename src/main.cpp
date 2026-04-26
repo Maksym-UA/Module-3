@@ -7,30 +7,48 @@
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_log.h"
 
-#define LED_GPIO (gpio_num_t)18
+#define LED_GPIO GPIO_NUM_18
 #define THRESHOLD_LOW  1400  // Напруга для ввімкнення (Dark)
 #define THRESHOLD_HIGH 1800  // Напруга для вимкнення (Light)
 #define WINDOW_SIZE  10    // Розмір вікна фільтрації (чим більше, тим плавніша реакція)
 
+// Контекст для Simple Moving Average
+struct SmaContext {
+    int samples[WINDOW_SIZE] = {0};
+    int index = 0;
+    int count = 0;
+    long sum = 0;
+    bool filled = false;
+};
+
 // Функція Simple Moving Average
-int get_sma_voltage(int new_sample) {
-    static int samples[WINDOW_SIZE] = {0};
-    static int index = 0;
-    static long sum = 0;
-    static bool filled = false;
-
+int get_sma_voltage(SmaContext &ctx, int new_sample) {
     // Віднімаємо найстаріше значення, додаємо нове
-    sum -= samples[index];
-    samples[index] = new_sample;
-    sum += samples[index];
+    ctx.sum -= ctx.samples[ctx.index];
+    ctx.samples[ctx.index] = new_sample;
+    ctx.sum += ctx.samples[ctx.index];
 
-    index = (index + 1) % WINDOW_SIZE;
-    if (index == 0) filled = true;
+    if (ctx.count < WINDOW_SIZE) {
+        ctx.count++;
+    } else {
+        ctx.filled = true;
+    }
 
-    return (int)(sum / (filled ? WINDOW_SIZE : (index == 0 ? 1 : index)));
+    int divisor = 1;
+    if (ctx.filled) {
+        divisor = WINDOW_SIZE;
+    } else if (ctx.index != 0) {
+        divisor = ctx.index;
+    }
+
+    ctx.index = (ctx.index + 1) % WINDOW_SIZE;
+    return (int)(ctx.sum / divisor);
 }
 
 extern "C" void app_main(void) {
+
+  // Контекст фільтра SMA
+  SmaContext sma_ctx;
 
   // 1. Налаштування LED
   gpio_reset_pin(LED_GPIO);
@@ -73,7 +91,7 @@ extern "C" void app_main(void) {
         ESP_ERROR_CHECK(adc_cali_raw_to_voltage(cali_handle, raw_val, &voltage_mv));
 
         // 2. Фільтрація (SMA)
-        int filtered_voltage = get_sma_voltage(voltage_mv);
+        int filtered_voltage = get_sma_voltage(sma_ctx, voltage_mv);
 
         // 3. Логіка з гістерезисом (опційно для стабільності)
         if (filtered_voltage < THRESHOLD_LOW) {
