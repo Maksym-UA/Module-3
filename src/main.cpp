@@ -53,7 +53,9 @@ static float clamp_angle(float angle)
         return angle;
     }
 
-
+//esp_err_t, is important: it communicates success (ESP_OK) or the exact failure code
+// from the underlying driver calls. That makes startup robust, because app_main() can
+// stop early and log a meaningful error instead of continuing with a partially configured servo.
 esp_err_t setup_potentiometer_ledc() {
     // Конфігурація ADC для потенціометра
     adc_oneshot_unit_init_cfg_t adc_unit_cfg = {};
