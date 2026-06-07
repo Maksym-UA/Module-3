@@ -5,7 +5,7 @@ A single potentiometer input is read by ADC, and its value is mapped to PWM duty
 
 ## What the project does
 
-- Initializes ADC1 one-shot mode to read potentiometer on GPIO4
+- Initializes ADC1 one-shot mode to read the potentiometer on GPIO4
 - Uses ADC calibration (curve fitting) to convert raw reading to millivolts
 - Maps 12-bit ADC value (`0..4095`) to 10-bit PWM duty (`0..1023`)
 - Drives LED brightness and DC motor speed from the same potentiometer value
@@ -24,7 +24,7 @@ Current settings from `src/main.cpp`:
 - Potentiometer connected to GPIO4 (ADC input)
 - LED connected to GPIO18 with current-limiting resistor (220 Ω recommended)
 - DC motor driver input (PWM) connected to GPIO5
-- ST2N2222A NPN transitor
+- ST2N2222A NPN transistor & 1 kΩ resistor
 - 1N4007 1 kΩ freewheeling diode
 
 Note: connect motor via a proper driver/transistor stage, not directly to ESP32 pin.
